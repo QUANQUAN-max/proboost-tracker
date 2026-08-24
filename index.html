@@ -1425,21 +1425,30 @@ function renderStoreAnalysis() {
     const activeRate = s.onSaleProductAmount > 0 ? (s.dynamicSaleProductAmount / s.onSaleProductAmount * 100) : 0;
     const videosPerInfluencer = s.relateExpertAmount > 0 ? (s.relateVideoAmount / s.relateExpertAmount) : 0;
 
-    // Rank trend from history
+    // Rank trend from history (skip entries with null rank/sales to avoid crash)
     const rh = RANK_HISTORY[s.shopId];
     let rankTrend = null, salesTrend = null;
     if (rh && rh.data && rh.data.length >= 2) {
       const wsDate = DATA.weekStartDate || '9999-99-99';
-      const entries = rh.data.filter(e => e.date <= wsDate).sort((a,b) => a.date.localeCompare(b.date));
-      if (entries.length >= 2) {
-        const last = entries[entries.length - 1];
-        const prev = entries[entries.length - 2];
+      const allEntries = rh.data.filter(e => e.date <= wsDate).sort((a,b) => a.date.localeCompare(b.date));
+      // Rank trend: use last two entries that have non-null rank
+      const rankEntries = allEntries.filter(e => e.rank !== null && e.rank !== undefined);
+      if (rankEntries.length >= 2) {
+        const last = rankEntries[rankEntries.length - 1];
+        const prev = rankEntries[rankEntries.length - 2];
         rankTrend = { current: last.rank, prev: prev.rank, change: prev.rank - last.rank }; // positive = improving
+        if (rankEntries.length >= 4) {
+          rankTrend.prev4 = rankEntries[rankEntries.length - 4].rank;
+        }
+      }
+      // Sales trend: use last two entries that have non-null sales
+      const salesEntries = allEntries.filter(e => e.sales !== null && e.sales !== undefined);
+      if (salesEntries.length >= 2) {
+        const last = salesEntries[salesEntries.length - 1];
+        const prev = salesEntries[salesEntries.length - 2];
         salesTrend = { current: last.sales, prev: prev.sales, change: last.sales - prev.sales };
-        if (entries.length >= 4) {
-          const prev4 = entries[entries.length - 4];
-          rankTrend.prev4 = prev4.rank;
-          salesTrend.prev4 = prev4.sales;
+        if (salesEntries.length >= 4) {
+          salesTrend.prev4 = salesEntries[salesEntries.length - 4].sales;
         }
       }
     }
