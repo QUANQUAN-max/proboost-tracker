@@ -237,7 +237,7 @@ tr:hover td:first-child{background:color-mix(in srgb, var(--surface) 90%, rgba(5
             <th>GMV</th><th class="sparkline-cell">GMV 周趋势</th><th>QoQ</th>
             <th>Rank</th><th class="sparkline-cell">Rank 周趋势</th><th class="sparkline-cell">Rank 月趋势</th>
             <th>Influencers</th><th class="sparkline-cell">Inf 周趋势</th><th class="sparkline-cell">Inf 月趋势</th>
-            <th>Videos</th><th title="本周发布 / 上周发布 带货视频数">Videos 本周/上周</th><th class="sparkline-cell">Vid 周趋势</th><th class="sparkline-cell">Vid 月趋势</th>
+            <th>Videos</th><th title="本周较上周发布的带货视频数变化量（本周-上周）">Videos 增量</th><th class="sparkline-cell">Vid 周趋势</th><th class="sparkline-cell">Vid 月趋势</th>
             <th>Products</th>
           </tr>
         </thead>
@@ -369,7 +369,7 @@ function render() {
 }
 
 // === Weekly video delta helpers ===
-// 对比店铺本周 vs 上周发布的带货视频数，判断销量是否由视频带动
+// 对比店铺本周 vs 上周发布的带货视频数，面板显示增量（本周-上周）
 function getWeeklyVideoDelta(s) {
   const vw = (s.videosThisWeek === undefined || s.videosThisWeek === null) ? null : Number(s.videosThisWeek);
   const vl = (s.videosLastWeek === undefined || s.videosLastWeek === null) ? null : Number(s.videosLastWeek);
@@ -380,22 +380,33 @@ function getWeeklyVideoDelta(s) {
   }
   return { vw, vl, pct };
 }
+// 显示本周较上周的视频增量：▲+N / ▼N / =0（带涨跌色，悬停显示本周/上周累计值）
+// 优先用 rank-history 相邻两周累计 videos 的差值（本周新增视频数）；videosThisWeek 字段通常为空
 function formatVideoDeltaHTML(s, compact) {
-  const { vw, vl, pct } = getWeeklyVideoDelta(s);
+  if (s && s.shopId) {
+    const hist = getStoreWeeklyDelta(s.shopId);
+    if (hist) {
+      const delta = hist.vidDelta;
+      const tip = `title="本周 ${hist.date} 累计 ${hist.curVid.toLocaleString()} vs 上周 ${hist.prevDate} 累计 ${hist.prevVid.toLocaleString()}"`;
+      if (delta === 0) return `<span class="positive" ${tip}>=0</span>`;
+      const cls = delta > 0 ? 'positive' : 'negative';
+      const arrow = delta > 0 ? '▲' : '▼';
+      return `<span class="${cls}" ${tip}>${arrow}${delta > 0 ? '+' : ''}${delta.toLocaleString()}</span>`;
+    }
+  }
+  // fallback：videosThisWeek / videosLastWeek 字段
+  const { vw, vl } = getWeeklyVideoDelta(s);
   if (vw === null && vl === null) return compact ? '<span style="color:var(--text2)">—</span>' : '<span style="color:var(--text2)">N/A</span>';
-  const thisStr = vw !== null ? vw.toLocaleString() : '—';
-  const lastStr = vl !== null ? vl.toLocaleString() : '—';
-  let badge = '';
-  if (vw !== null && vl !== null && pct !== null && (vw !== vl)) {
-    const cls = pct >= 0 ? 'positive' : 'negative';
-    badge = `<span class="${cls}" style="font-size:11px;margin-left:4px" title="本周 ${thisStr} vs 上周 ${lastStr}">${pct >= 0 ? '▲' : '▼'}${Math.abs(pct).toFixed(0)}%</span>`;
-  } else if (vw !== null && vl !== null && pct !== null) {
-    badge = `<span class="positive" style="font-size:11px;margin-left:4px" title="本周 ${thisStr} vs 上周 ${lastStr}">=</span>`;
+  if (vw !== null && vl !== null) {
+    const delta = vw - vl;
+    const tip = `title="本周 ${vw.toLocaleString()} vs 上周 ${vl.toLocaleString()}"`;
+    if (delta === 0) return `<span class="positive" ${tip}>=0</span>`;
+    const cls = delta > 0 ? 'positive' : 'negative';
+    const arrow = delta > 0 ? '▲' : '▼';
+    return `<span class="${cls}" ${tip}>${arrow}${delta > 0 ? '+' : ''}${delta.toLocaleString()}</span>`;
   }
-  if (compact) {
-    return `<span title="本周 vs 上周视频数">${thisStr}<span style="color:var(--text2);font-size:10px">/${lastStr}</span></span>${badge}`;
-  }
-  return `${thisStr} <span style="color:var(--text2);font-size:11px">/ ${lastStr}</span>${badge}`;
+  const only = vw !== null ? vw : vl;
+  return `<span title="仅有一周数据">${only.toLocaleString()}</span>`;
 }
 
 // === Overview ===
@@ -446,7 +457,7 @@ function renderOverview() {
         <div class="metric-row"><span class="metric-label">Sales QoQ</span><span class="metric-value ${s.saleAmountQoq>=0?'positive':'negative'}">${s.saleAmountQoq>=0?'+':''}${s.saleAmountQoq||0}%</span></div>
         <div class="metric-row"><span class="metric-label">Rank</span><span class="metric-value">#${(s.rank||0).toLocaleString()}</span></div>
         <div class="metric-row"><span class="metric-label">Influencers / Videos</span><span class="metric-value">${relateExpertAmount.toLocaleString()} / ${relateVideoAmount.toLocaleString()}</span></div>
-        <div class="metric-row"><span class="metric-label">Videos 本周/上周</span><span class="metric-value">${formatVideoDeltaHTML(s)}</span></div>
+        <div class="metric-row"><span class="metric-label">Videos 增量</span><span class="metric-value">${formatVideoDeltaHTML(s)}</span></div>
     </div>
   `).join('');
 }
@@ -1658,18 +1669,19 @@ function renderStoreAnalysis() {
       }
     }
 
-    // 5.5 Weekly video publishing drive analysis (本周 vs 上周发布视频数 → 是否带动销量)
-    const vidDelta = getWeeklyVideoDelta(s);
-    if (vidDelta.vw !== null) {
+    // 5.5 Weekly video publishing drive analysis (本周新增视频数 → 是否带动销量)
+    const hist = s.shopId ? getStoreWeeklyDelta(s.shopId) : null;
+    if (hist) {
+      const vDelta = hist.vidDelta;
       const qoq = s.saleAmountQoq;
-      if (vidDelta.vl !== null && vidDelta.vw > vidDelta.vl && qoq > 0) {
-        items.push(`<div class="analysis-item"><span class="tag good">驱动</span>本周发布视频 <b>${vidDelta.vw}</b> 条（上周 ${vidDelta.vl} 条，<b>+${vidDelta.pct.toFixed(0)}%</b>），销量 QoQ <b>+${qoq}%</b>，视频增量与销量同向，内容投放带动明显</div>`);
-      } else if (vidDelta.vl !== null && vidDelta.vw > vidDelta.vl) {
-        items.push(`<div class="analysis-item"><span class="tag tip">信号</span>本周发布视频 <b>${vidDelta.vw}</b> 条（上周 ${vidDelta.vl} 条，+${vidDelta.pct.toFixed(0)}%），但销量 QoQ ${qoq >= 0 ? '+' : ''}${qoq || 0}%，视频增量尚未转化为销量，需关注内容质量与选品匹配</div>`);
-      } else if (vidDelta.vl !== null && vidDelta.vw < vidDelta.vl && qoq > 0) {
-        items.push(`<div class="analysis-item"><span class="tag tip">观察</span>本周视频 <b>${vidDelta.vw}</b> 条（上周 ${vidDelta.vl} 条，${vidDelta.pct.toFixed(0)}%）但销量 QoQ +${qoq}%，存量视频/达人仍在转化，视频发布节奏可适度加码</div>`);
-      } else if (vidDelta.vw === 0) {
-        items.push(`<div class="analysis-item"><span class="tag bad">信号</span>本周未发布新视频（上周 ${vidDelta.vl === null ? '无数据' : vidDelta.vl + ' 条'}），短视频流量可能断档，建议保持每周视频投放节奏</div>`);
+      if (vDelta > 0 && qoq > 0) {
+        items.push(`<div class="analysis-item"><span class="tag good">驱动</span>本周新增视频 <b>+${vDelta}</b> 条（累计 ${hist.curVid} 条），销量 QoQ <b>+${qoq}%</b>，视频增量与销量同向，内容投放带动明显</div>`);
+      } else if (vDelta > 0) {
+        items.push(`<div class="analysis-item"><span class="tag tip">信号</span>本周新增视频 <b>+${vDelta}</b> 条（累计 ${hist.curVid} 条），但销量 QoQ ${qoq >= 0 ? '+' : ''}${qoq || 0}%，视频增量尚未转化为销量，需关注内容质量与选品匹配</div>`);
+      } else if (vDelta < 0 && qoq > 0) {
+        items.push(`<div class="analysis-item"><span class="tag tip">观察</span>本周视频 <b>${vDelta}</b> 条（上周累计 ${hist.prevVid} 条）但销量 QoQ +${qoq}%，存量视频/达人仍在转化，视频发布节奏可适度加码</div>`);
+      } else if (vDelta === 0) {
+        items.push(`<div class="analysis-item"><span class="tag bad">信号</span>本周无新增视频（累计 ${hist.curVid} 条），短视频流量可能断档，建议保持每周视频投放节奏</div>`);
       }
     }
 
